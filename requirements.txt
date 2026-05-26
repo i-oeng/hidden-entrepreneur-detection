@@ -1,0 +1,13 @@
+polars
+lightgbm
+catboost
+shap
+optuna
+scikit-learn
+pyarrow
+matplotlib
+seaborn
+scipy
+imbalanced-learn
+numpy
+pandas
