@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import (
     roc_auc_score, average_precision_score,
     precision_recall_curve, confusion_matrix,
-    classification_report, f1_score,
+    classification_report, fbeta_score,
 )
 
 
@@ -84,15 +84,15 @@ def validate(
         pr  = average_precision_score(y_eval, scores)
         print(f"{name:<20} {roc:>10.4f} {pr:>10.4f}")
 
-    # Find optimal threshold by maximising F1
-    best_f1, best_thresh = 0.0, 0.5
+    # Find optimal threshold by maximising F0.5 (prioritizes precision)
+    best_fbeta, best_thresh = 0.0, 0.5
     for t in np.linspace(0.05, 0.95, 181):
         preds = (ensemble_eval >= t).astype(int)
-        f1 = f1_score(y_eval, preds, zero_division=0)
-        if f1 > best_f1:
-            best_f1, best_thresh = f1, t
+        fbeta = fbeta_score(y_eval, preds, beta=0.5, zero_division=0)
+        if fbeta > best_fbeta:
+            best_fbeta, best_thresh = fbeta, t
 
-    print(f"\nOptimal threshold : {best_thresh:.2f}  (F1 = {best_f1:.4f})")
+    print(f"\nOptimal threshold : {best_thresh:.2f}  (F0.5 = {best_fbeta:.4f})")
     print("\nConfusion Matrix (Ensemble @ optimal threshold):")
     cm = confusion_matrix(y_eval, (ensemble_eval >= best_thresh).astype(int))
     print(cm)
@@ -118,4 +118,4 @@ def validate(
     plt.savefig(out_dir / "pr_curve.png", dpi=150, bbox_inches="tight")
     plt.close()
 
-    return {"best_thresh": best_thresh, "best_f1": best_f1, "iso_ref": iso_ref}
+    return {"best_thresh": best_thresh, "best_fbeta": best_fbeta, "iso_ref": iso_ref}
