@@ -56,10 +56,11 @@ def run_pu_bagging(
 
     pu_scores     = np.zeros(len(cons_df))
     pu_bag_counts = np.zeros(len(cons_df))
+    rng = np.random.default_rng(seed)
 
     for bag in range(n_bags):
         n_neg   = int(len(X_pos) * bag_ratio)
-        neg_idx = np.random.choice(len(X_unlabeled), size=n_neg, replace=True)
+        neg_idx = rng.choice(len(X_unlabeled), size=n_neg, replace=True)
 
         # Out-of-bag mask: consumer cards NOT drawn for this bag
         oob_mask           = np.ones(len(X_unlabeled), dtype=bool)
@@ -88,9 +89,14 @@ def run_pu_bagging(
         if (bag + 1) % 10 == 0:
             print(f"  Bag {bag + 1}/{n_bags} done")
 
-    # Normalise - some cards may have been OOB fewer than n_bags times
-    valid              = pu_bag_counts > 0
-    pu_scores[valid]  /= pu_bag_counts[valid]
+    # Normalise - some cards may have been OOB fewer than n_bags times.
+    # With very small consumer pools, a card may never be OOB; assign the
+    # mean valid score instead of silently leaving an artificial zero.
+    valid = pu_bag_counts > 0
+    pu_scores[valid] /= pu_bag_counts[valid]
+    if (~valid).any():
+        fallback_score = float(pu_scores[valid].mean()) if valid.any() else 0.0
+        pu_scores[~valid] = fallback_score
 
     pu_series = pd.Series(pu_scores, index=cons_df.index, name="pu_score")
 

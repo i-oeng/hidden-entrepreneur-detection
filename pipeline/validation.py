@@ -17,6 +17,84 @@ from sklearn.model_selection import train_test_split
 from pipeline.scoring import predict_component_scores
 
 
+def _score_summary(group: str, score_name: str, values: np.ndarray) -> dict:
+    """Return compact distribution stats for a model score."""
+    values = np.asarray(values, dtype=float)
+    if len(values) == 0:
+        return {
+            "group": group,
+            "score": score_name,
+            "cards": 0,
+            "mean": np.nan,
+            "std": np.nan,
+            "min": np.nan,
+            "p01": np.nan,
+            "p05": np.nan,
+            "p25": np.nan,
+            "p50": np.nan,
+            "p75": np.nan,
+            "p95": np.nan,
+            "p99": np.nan,
+            "max": np.nan,
+        }
+
+    return {
+        "group": group,
+        "score": score_name,
+        "cards": len(values),
+        "mean": values.mean(),
+        "std": values.std(),
+        "min": values.min(),
+        "p01": np.quantile(values, 0.01),
+        "p05": np.quantile(values, 0.05),
+        "p25": np.quantile(values, 0.25),
+        "p50": np.quantile(values, 0.50),
+        "p75": np.quantile(values, 0.75),
+        "p95": np.quantile(values, 0.95),
+        "p99": np.quantile(values, 0.99),
+        "max": values.max(),
+    }
+
+
+def _save_feature_separation_report(
+    biz_eval: pd.DataFrame,
+    neg_eval: pd.DataFrame,
+    y_eval: np.ndarray,
+    features: list[str],
+    out_dir: Path,
+) -> pd.DataFrame:
+    """Audit whether individual features almost solve the validation split."""
+    rows = []
+    for feature in features:
+        scores = pd.concat([biz_eval[feature], neg_eval[feature]]).to_numpy(dtype=float)
+        try:
+            auc = roc_auc_score(y_eval, scores)
+        except ValueError:
+            auc = 0.5
+
+        rows.append({
+            "feature": feature,
+            "roc_auc": auc,
+            "separation_auc": max(auc, 1.0 - auc),
+            "direction": "higher_for_business" if auc >= 0.5 else "lower_for_business",
+            "business_mean": biz_eval[feature].mean(),
+            "negative_mean": neg_eval[feature].mean(),
+        })
+
+    report = (
+        pd.DataFrame(rows)
+        .sort_values("separation_auc", ascending=False)
+        .reset_index(drop=True)
+    )
+    path = out_dir / "feature_separation_report.csv"
+    report.to_csv(path, index=False)
+
+    print(f"\nFeature separation report saved to {path}")
+    print("Top single-feature separators:")
+    print(report.head(10).to_string(index=False))
+    return report
+
+
 def _blend_from_components(
     lgb_scores: np.ndarray,
     catboost_scores: np.ndarray,
@@ -151,6 +229,18 @@ def validate(
         metric_rows.append({"model": name, "roc_auc": roc, "pr_auc": pr})
         print(f"{name:<20} {roc:>10.4f} {pr:>10.4f}")
 
+    feature_report = _save_feature_separation_report(
+        biz_eval, neg_eval, y_eval, features, out_dir
+    )
+    best_model_auc = max(row["roc_auc"] for row in metric_rows)
+    best_feature_auc = feature_report["separation_auc"].max()
+    if best_model_auc >= 0.995 or best_feature_auc >= 0.995:
+        print(
+            "\nValidation caution: near-perfect metrics usually mean the synthetic "
+            "data or selected reliable negatives are very separable. Treat this "
+            "as a ranking benchmark, not as proof of real-world 100% accuracy."
+        )
+
     print("\nSimple behavioural baselines:")
     for name in ["b2b_ratio", "total_spend", "tx_count", "unique_merchants"]:
         scores = pd.concat([biz_eval[name], neg_eval[name]]).to_numpy(dtype=float)
@@ -177,23 +267,72 @@ def validate(
         target_names=["Consumer", "Business"], zero_division=0,
     ))
 
-    stress_rows = []
     cons_with_pu = cons_df.copy()
-    cons_with_pu["pu_score"] = pd.Series(pu_scores, index=cons_df.index)
+    cons_with_pu["pu_score"] = np.asarray(pu_scores)
+    X_cons = cons_with_pu[features].values
+    _, _, _, ensemble_cons = predict_component_scores(
+        X_cons, lgb_model, catboost_model, iso_model, iso_ref, tuned_weights
+    )
+    cons_with_pu["score_auc_optimized"] = ensemble_cons
+    cons_with_pu["score_calibrated"] = score_calibrator.predict(ensemble_cons)
+
+    distribution_rows = []
+    eval_groups = {
+        "eval_known_business": y_eval == 1,
+        "eval_reliable_negative": y_eval == 0,
+    }
+    for group_name, mask in eval_groups.items():
+        distribution_rows.append(
+            _score_summary(group_name, "score_auc_optimized", ensemble_eval[mask])
+        )
+        distribution_rows.append(
+            _score_summary(group_name, "score_calibrated", calibrated_eval[mask])
+        )
+
+    consumer_groups = {
+        "all_unlabeled_consumers": np.ones(len(cons_with_pu), dtype=bool),
+        "low_pu_reliable_negative_pool": (
+            cons_with_pu["pu_score"] <= cons_with_pu["pu_score"].quantile(0.20)
+        ),
+        "high_pu_hard_consumers_90": (
+            cons_with_pu["pu_score"] >= cons_with_pu["pu_score"].quantile(0.90)
+        ),
+        "high_pu_hard_consumers_95": (
+            cons_with_pu["pu_score"] >= cons_with_pu["pu_score"].quantile(0.95)
+        ),
+    }
+    for group_name, mask in consumer_groups.items():
+        group = cons_with_pu.loc[mask]
+        distribution_rows.append(
+            _score_summary(group_name, "pu_score", group["pu_score"].to_numpy())
+        )
+        distribution_rows.append(
+            _score_summary(
+                group_name,
+                "score_auc_optimized",
+                group["score_auc_optimized"].to_numpy(),
+            )
+        )
+        distribution_rows.append(
+            _score_summary(
+                group_name,
+                "score_calibrated",
+                group["score_calibrated"].to_numpy(),
+            )
+        )
+
+    distribution_path = out_dir / "score_distribution_report.csv"
+    pd.DataFrame(distribution_rows).to_csv(distribution_path, index=False)
+    print(f"\nScore distribution report saved to {distribution_path}")
+
+    stress_rows = []
     for q in [0.80, 0.90, 0.95]:
         pu_cutoff = cons_with_pu["pu_score"].quantile(q)
         hard_cons = cons_with_pu[cons_with_pu["pu_score"] >= pu_cutoff]
         if hard_cons.empty:
             continue
 
-        X_hard = hard_cons[features].values
-        lgb_hard, cat_hard, iso_hard, _ = predict_component_scores(
-            X_hard, lgb_model, catboost_model, iso_model, iso_ref, tuned_weights
-        )
-        ensemble_hard = _blend_from_components(
-            lgb_hard, cat_hard, iso_hard, tuned_weights
-        )
-        calibrated_hard = score_calibrator.predict(ensemble_hard)
+        calibrated_hard = hard_cons["score_calibrated"].to_numpy()
 
         stress_rows.append({
             "pu_quantile_floor": q,

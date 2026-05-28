@@ -1,0 +1,8 @@
+check,status,value
+configured_features_present,PASS,all present
+duplicate_card_rows,PASS,0
+feature_nan_count,PASS,0
+feature_nonfinite_count,PASS,0
+card_rows,INFO,105000
+feature_count,INFO,61
+label_counts,INFO,"{0: 80000, 1: 25000}"

@@ -16,8 +16,11 @@
 # Each pipeline step lives in its own module under pipeline/.
 # All tuneable constants and paths are in config.py.
 
-
 import warnings
+import argparse
+import random
+from pathlib import Path
+
 import optuna
 
 warnings.filterwarnings("ignore")
@@ -38,18 +41,47 @@ from pipeline.scoring            import score_consumers
 from pipeline.segmentation       import assign_segments, print_segment_summary
 from pipeline.explainability     import run_shap, plot_feature_importance, add_reason_codes
 from pipeline.export             import export_results
+from pipeline.quality            import validate_transactions, validate_feature_frame
+from pipeline.reporting          import save_run_metadata
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Train and score the hidden commercial activity detection pipeline."
+    )
+    parser.add_argument("--data-dir", default=str(config.DATA_DIR))
+    parser.add_argument("--out-dir", default=str(config.OUT_DIR))
+    parser.add_argument("--trials", type=int, default=config.N_OPTUNA_TRIALS)
+    parser.add_argument("--seed", type=int, default=config.SEED)
+    return parser.parse_args()
+
+
+def apply_cli_overrides(args) -> None:
+    config.DATA_DIR = Path(args.data_dir)
+    config.OUT_DIR = Path(args.out_dir)
+    config.OUT_DIR.mkdir(parents=True, exist_ok=True)
+    config.N_OPTUNA_TRIALS = args.trials
+    config.SEED = args.seed
+    np.random.seed(config.SEED)
+    random.seed(config.SEED)
+    config.CATBOOST_PARAMS["random_seed"] = config.SEED
+    config.ISO_FOREST_PARAMS["random_state"] = config.SEED
 
 
 if __name__ == "__main__":
+    args = parse_args()
+    apply_cli_overrides(args)
 
     # Load data
     all_txns = load_data(config.DATA_DIR)
+    validate_transactions(all_txns, config.OUT_DIR)
 
     # MCC semantic tagging
     all_txns = apply_mcc_tags(all_txns, config.B2B_MCCS, config.MIXED_MCCS)
 
     # Feature engineering
     card_agg = build_features(all_txns, config.FEATURES)
+    validate_feature_frame(card_agg, config.FEATURES, config.OUT_DIR)
 
     biz_df  = card_agg[card_agg["label"] == 1].copy().reset_index(drop=True)
     cons_df = card_agg[card_agg["label"] == 0].copy().reset_index(drop=True)
@@ -135,3 +167,12 @@ if __name__ == "__main__":
 
     # Section 11 - Export results
     export_results(cons_df, config.OUT_DIR, config.OUTPUT_COLUMNS)
+    save_run_metadata(
+        config.OUT_DIR,
+        config,
+        best_params,
+        val_results,
+        card_count=len(card_agg),
+        consumer_count=len(cons_df),
+        business_count=len(biz_df),
+    )

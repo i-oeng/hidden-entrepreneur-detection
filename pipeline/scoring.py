@@ -10,10 +10,19 @@ def score_isolation_forest(
     X: np.ndarray,
     iso_ref: np.ndarray,
 ) -> np.ndarray:
-    """Map IsolationForest decision scores to a clipped business-likeness score."""
+    """Map IsolationForest inlier scores to a business-likeness score.
+
+    The IsolationForest is trained on known business cards only. In sklearn,
+    higher decision_function values mean "more normal" under the fitted
+    distribution, so higher values are more business-like here. Percentile
+    clipping makes the mapping robust to a few extreme reference cards.
+    """
     raw = iso_model.decision_function(X)
-    lo, hi = iso_ref.min(), iso_ref.max()
-    scores = 1.0 - (raw - lo) / (hi - lo + 1e-9)
+    lo, hi = np.percentile(iso_ref, [1, 99])
+    if hi <= lo:
+        return np.full(len(raw), 0.5, dtype=float)
+
+    scores = (raw - lo) / (hi - lo)
     return np.clip(scores, 0.0, 1.0)
 
 

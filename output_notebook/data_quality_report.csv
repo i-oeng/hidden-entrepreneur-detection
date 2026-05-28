@@ -1,0 +1,13 @@
+check,status,value
+required_columns_present,PASS,all present
+transaction_rows,INFO,12830080
+unique_cards,INFO,105000
+date_range,INFO,2025-10-01 to 2026-03-31
+null_rate_card_number,PASS,0.000000
+null_rate_transaction_amount_kzt,PASS,0.000000
+null_rate_mcc,PASS,0.000000
+null_rate_merchant_id,PASS,0.000000
+null_rate_merchant_country,PASS,0.000000
+null_rate_channel,PASS,0.000000
+non_positive_amounts,PASS,0
+merchant_reference_join_miss_rate,PASS,0.000000
