@@ -1,29 +1,20 @@
 # config.py - Global configuration for the Hidden Entrepreneur Detection pipeline
-#
 # All tuneable knobs, magic numbers, and paths live here.
-
 import random
 from pathlib import Path
-
 import numpy as np
 
-# Section Paths
-
+# Section Path
 # Root of the raw data files (parquet files sit directly in the project root)
 DATA_DIR = Path(".")
-
 # All output artefacts (plots, CSV) are written here
 OUT_DIR = Path("./output")
 OUT_DIR.mkdir(exist_ok=True)
-
-# Section Reproducibility
-
 SEED = 42
 np.random.seed(SEED)
 random.seed(SEED)
 
 # Section PU Bagging
-
 N_BAGS    = 50    # Number of bags in the PU ensemble
 BAG_RATIO = 1.0   # #negatives per bag = BAG_RATIO × #positives
 
@@ -33,7 +24,6 @@ BAG_RATIO = 1.0   # #negatives per bag = BAG_RATIO × #positives
 RELIABLE_NEG_QUANTILE = 0.20
 
 # Section Optuna / Model Tuning
-
 N_OPTUNA_TRIALS = 40
 N_CV_FOLDS      = 5
 
@@ -58,6 +48,10 @@ ISO_FOREST_PARAMS = dict(
 # Section Ensemble weights
 
 ENSEMBLE_WEIGHTS = dict(lgb=0.50, catboost=0.35, iso=0.15)
+
+# Section Explainability
+
+N_REASON_CODES = 3
 
 # Section MCC Semantic Sets
 # ISO 18245 codes that signal B2B / commercial activity
@@ -97,14 +91,28 @@ FEATURES: list[str] = [
     # Volume
     "tx_count", "total_spend", "mean_tx", "std_tx", "tx_amount_cv",
     "p95_tx", "max_tx", "median_tx",
+    "log_tx_count", "log_total_spend", "log_mean_tx",
+    "log_p95_tx", "log_max_tx",
     # Merchant diversity
     "unique_merchants", "unique_mccs", "mcc_entropy", "merchant_concentration",
     "spend_per_merchant",
+    "log_unique_merchants",
     # MCC semantics
     "b2b_ratio", "mixed_mcc_ratio",
     # Temporal
     "business_hours_ratio", "weekend_ratio", "active_days", "active_months",
     "tx_per_active_day", "monthly_spend_cv", "gap_mean", "gap_std",
+    # Recent behaviour / quick detection
+    "tx_count_30d", "total_spend_30d", "b2b_ratio_30d",
+    "unique_merchants_30d", "active_days_30d",
+    "tx_count_60d", "total_spend_60d", "b2b_ratio_60d",
+    "unique_merchants_60d", "active_days_60d",
+    "tx_count_90d", "total_spend_90d", "b2b_ratio_90d",
+    "unique_merchants_90d", "active_days_90d",
+    "spend_share_30d", "tx_share_30d",
+    "spend_accel_30_vs_90", "tx_accel_30_vs_90",
+    "log_total_spend_30d", "log_total_spend_60d", "log_total_spend_90d",
+    "log_tx_count_30d", "log_tx_count_60d", "log_tx_count_90d",
     # Channel
     "offline_ratio", "tokenized_ratio", "recurring_ratio", "round_large_ratio",
     # Geography
@@ -146,11 +154,12 @@ SEGMENT_ACTIONS: dict[str, str] = {
 OUTPUT_COLUMNS: list[str] = [
     "card_number",
     "score_lgb", "score_catboost", "score_iso",
-    "score_ensemble", "score_calibrated",
+    "score_ensemble", "score_auc_optimized", "score_calibrated",
     "segment",
     # Key behavioural features for interpretability
     "tx_count", "total_spend", "b2b_ratio",
     "mcc_entropy", "merchant_concentration",
     "business_hours_ratio", "offline_ratio",
     "unique_merchants", "unique_countries",
+    "reason_1", "reason_2", "reason_3",
 ]

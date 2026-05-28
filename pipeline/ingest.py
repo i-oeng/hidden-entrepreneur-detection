@@ -1,5 +1,7 @@
-# ingest.py - Data Loading
-# Use Polars for fast parquet loading.
+# CONTRACT:
+#   load_data(data_dir) -> pl.DataFrame
+#   Returns the full transaction DataFrame with merchant metadata joined in
+#   and a `label` column (1 = business card, 0 = consumer card).
 
 from pathlib import Path
 
@@ -7,7 +9,22 @@ import polars as pl
 
 
 def load_data(data_dir: Path) -> pl.DataFrame:
-    """Load raw parquet files, attach labels, and join merchant metadata."""
+    """
+    Load raw parquet files, attach labels, concatenate, and join merchant
+    reference metadata.
+
+    Parameters
+    data_dir : Path
+        Directory that contains:
+            business_cards_MDQ.parquet
+            consumer_cards_MDQ.parquet
+            merchants_reference.parquet
+
+    Returns
+    pl.DataFrame
+        Unified transaction table with columns from all three sources plus
+        a binary `label` column (1 = business, 0 = consumer).
+    """
     print("=" * 60)
     print("SECTION 1: Loading data")
     print("=" * 60)

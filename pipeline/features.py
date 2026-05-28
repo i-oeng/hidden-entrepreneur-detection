@@ -2,6 +2,8 @@
 #   Phase A - Polars group_by().agg()  : vectorised, fast.
 #   Phase B - Python row-level loops   : entropy / Herfindahl / gap stats.
 
+from datetime import timedelta
+
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -72,6 +74,18 @@ def build_features(all_txns: pl.DataFrame, features: list[str]) -> pd.DataFrame:
     print("SECTION 3: Feature Engineering")
     print("=" * 60)
 
+    max_date = all_txns.select(pl.col("date").max()).item()
+    rolling_exprs = []
+    for window in (30, 60, 90):
+        recent = pl.col("date") >= (max_date - timedelta(days=window - 1))
+        rolling_exprs.extend([
+            pl.col("transaction_amount_kzt").filter(recent).count().alias(f"tx_count_{window}d"),
+            pl.col("transaction_amount_kzt").filter(recent).sum().alias(f"total_spend_{window}d"),
+            pl.col("is_b2b_mcc").filter(recent).mean().alias(f"b2b_ratio_{window}d"),
+            pl.col("merchant_id").filter(recent).n_unique().alias(f"unique_merchants_{window}d"),
+            pl.col("date").filter(recent).n_unique().alias(f"active_days_{window}d"),
+        ])
+
     # Phase A: Vectorised Polars aggregation 
     card_agg = (
         all_txns
@@ -115,6 +129,9 @@ def build_features(all_txns: pl.DataFrame, features: list[str]) -> pd.DataFrame:
             (pl.col("country") != "KZ").mean().alias("foreign_ratio"),
             pl.col("merchant_country").n_unique().alias("unique_merchant_countries"),
 
+            # Rolling-window features for faster early detection.
+            *rolling_exprs,
+
             # Store raw lists for Python-level Phase B calculations
             pl.col("mcc").alias("_mcc_list"),
             pl.col("merchant_id").alias("_merchant_list"),
@@ -146,6 +163,30 @@ def build_features(all_txns: pl.DataFrame, features: list[str]) -> pd.DataFrame:
     card_agg["tx_amount_cv"]      = card_agg["std_tx"] / (card_agg["mean_tx"] + 1e-6)
     card_agg["tx_per_active_day"] = card_agg["tx_count"] / (card_agg["active_days"] + 1)
     card_agg["spend_per_merchant"] = card_agg["total_spend"] / (card_agg["unique_merchants"] + 1)
+    card_agg["spend_share_30d"] = card_agg["total_spend_30d"] / (card_agg["total_spend"] + 1e-6)
+    card_agg["tx_share_30d"] = card_agg["tx_count_30d"] / (card_agg["tx_count"] + 1e-6)
+
+    prior_60_spend = card_agg["total_spend_90d"] - card_agg["total_spend_30d"]
+    prior_60_tx = card_agg["tx_count_90d"] - card_agg["tx_count_30d"]
+    card_agg["spend_accel_30_vs_90"] = np.where(
+        prior_60_spend > 0,
+        card_agg["total_spend_30d"] / (prior_60_spend / 2),
+        0.0,
+    )
+    card_agg["tx_accel_30_vs_90"] = np.where(
+        prior_60_tx > 0,
+        card_agg["tx_count_30d"] / (prior_60_tx / 2),
+        0.0,
+    )
+
+    log_sources = [
+        "tx_count", "total_spend", "mean_tx", "p95_tx", "max_tx",
+        "unique_merchants", "total_spend_30d", "total_spend_60d",
+        "total_spend_90d", "tx_count_30d", "tx_count_60d", "tx_count_90d",
+    ]
+    for source in log_sources:
+        values = pd.to_numeric(card_agg[source], errors="coerce").fillna(0)
+        card_agg[f"log_{source}"] = np.sign(values) * np.log1p(np.abs(values))
 
     # Ordinal-encode categoricals 
     # Tree models are not sensitive to encoding; ordinal is fine here.

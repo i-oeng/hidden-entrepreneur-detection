@@ -17,9 +17,9 @@ def assign_segments(
     thresholds: list[tuple[float, str]],
 ) -> pd.DataFrame:
     """Attach a `segment` column to cons_df based on `score_calibrated`."""
-    print("\n" + "=" * 60)
-    print("SECTION 9: Business Segmentation")
-    print("=" * 60)
+
+    print("Business Segmentation in progress...")
+
 
     cons_df = cons_df.copy()
     cons_df["segment"] = cons_df["score_calibrated"].apply(

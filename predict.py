@@ -1,10 +1,9 @@
 # predict.py - Score NEW consumer cards using trained models
 #
-# USAGE:
+# Use:
 #   python predict.py
 #   python predict.py --input new_cards.parquet --output scored_output.csv
 #
-# PREREQUISITES:
 #   Run main.py first. It saves trained models to ./output/models/.
 
 import argparse
@@ -22,12 +21,17 @@ import config
 from pipeline.mcc_tags      import apply_mcc_tags
 from pipeline.features      import build_features
 from pipeline.segmentation  import assign_segments, print_segment_summary
+from pipeline.scoring       import predict_component_scores
+from pipeline.explainability import add_reason_codes
 
 
 def load_models(model_dir: Path) -> dict:
     """Load all saved model artifacts."""
     models = {}
-    for name in ["lgb_model", "catboost_model", "iso_model", "iso_calib", "iso_ref"]:
+    for name in [
+        "lgb_model", "catboost_model", "iso_model",
+        "iso_ref", "ensemble_weights",
+    ]:
         path = model_dir / f"{name}.pkl"
         if not path.exists():
             raise FileNotFoundError(
@@ -36,6 +40,15 @@ def load_models(model_dir: Path) -> dict:
             )
         with open(path, "rb") as f:
             models[name] = pickle.load(f)
+
+    calibrator_path = model_dir / "score_calibrator.pkl"
+    if not calibrator_path.exists():
+        raise FileNotFoundError(
+            f"Model file not found: {calibrator_path}\n"
+            f"Run main.py first to train and save models."
+        )
+    with open(calibrator_path, "rb") as f:
+        models["score_calibrator"] = pickle.load(f)
     return models
 
 
@@ -43,7 +56,6 @@ def score_new_data(
     txns: pl.DataFrame,
     models: dict,
     features: list[str],
-    ensemble_weights: dict,
 ) -> pd.DataFrame:
     """Run the full scoring pipeline on new transaction data."""
     # Apply MCC semantic tagging (identical to training)
@@ -54,32 +66,31 @@ def score_new_data(
 
     X = card_agg[features].values
 
-    # Score with each model
-    lgb_scores      = models["lgb_model"].predict_proba(X)[:, 1]
-    catboost_scores = models["catboost_model"].predict_proba(X)[:, 1]
-
-    iso_ref = models["iso_ref"]
-    iso_raw = models["iso_model"].decision_function(X)
-    iso_scores = 1.0 - (iso_raw - iso_ref.min()) / (iso_ref.max() - iso_ref.min() + 1e-9)
-
-    ensemble = (
-        ensemble_weights["lgb"]      * lgb_scores +
-        ensemble_weights["catboost"] * catboost_scores +
-        ensemble_weights["iso"]      * iso_scores
+    lgb_scores, catboost_scores, iso_scores, ensemble = predict_component_scores(
+        X,
+        models["lgb_model"],
+        models["catboost_model"],
+        models["iso_model"],
+        models["iso_ref"],
+        models["ensemble_weights"],
     )
 
     # Calibrate
-    calibrated = models["iso_calib"].predict(lgb_scores)
+    calibrated = models["score_calibrator"].predict(ensemble)
 
     # Attach scores
     card_agg["score_lgb"]        = lgb_scores
     card_agg["score_catboost"]   = catboost_scores
     card_agg["score_iso"]        = iso_scores
     card_agg["score_ensemble"]   = ensemble
+    card_agg["score_auc_optimized"] = ensemble
     card_agg["score_calibrated"] = calibrated
 
     # Assign segments
     card_agg = assign_segments(card_agg, config.SEGMENT_THRESHOLDS)
+    card_agg = add_reason_codes(
+        models["lgb_model"], card_agg, features, top_k=config.N_REASON_CODES
+    )
 
     return card_agg
 
@@ -136,14 +147,15 @@ def main():
     print(f"Transactions loaded: {txns.shape[0]:,} rows")
 
     # Score
-    scored = score_new_data(txns, models, config.FEATURES, config.ENSEMBLE_WEIGHTS)
+    scored = score_new_data(txns, models, config.FEATURES)
 
     # Export
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     out_cols = [c for c in config.OUTPUT_COLUMNS if c in scored.columns]
-    scored[out_cols].sort_values("score_calibrated", ascending=False).to_csv(
+    rank_col = "score_auc_optimized" if "score_auc_optimized" in scored.columns else "score_ensemble"
+    scored[out_cols].sort_values(rank_col, ascending=False).to_csv(
         output_path, index=False
     )
 

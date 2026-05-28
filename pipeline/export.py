@@ -1,4 +1,6 @@
-# export.py - Export Results
+#
+# CONTRACT:
+#   export_results(cons_df, out_dir, output_columns) -> None
 
 from pathlib import Path
 
@@ -10,14 +12,23 @@ def export_results(
     out_dir: Path,
     output_columns: list[str],
 ) -> None:
-    """Write scored consumer DataFrame to CSV and print summary."""
+    """
+    Write the scored, segmented consumer card DataFrame to CSV and print
+    the final pipeline summary.
+
+    Parameters
+    cons_df        : fully scored and segmented consumer DataFrame
+    out_dir        : directory to write `hidden_entrepreneur_scores.csv`
+    output_columns : ordered list of columns to include in the output file
+    """
     print("\n" + "=" * 60)
     print("SECTION 11: Exporting Results")
     print("=" * 60)
 
+    rank_col = "score_auc_optimized" if "score_auc_optimized" in cons_df.columns else "score_ensemble"
     results_df = (
         cons_df[output_columns]
-        .sort_values("score_calibrated", ascending=False)
+        .sort_values(rank_col, ascending=False)
     )
     out_path = out_dir / "hidden_entrepreneur_scores.csv"
     results_df.to_csv(out_path, index=False)

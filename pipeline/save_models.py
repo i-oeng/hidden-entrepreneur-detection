@@ -11,7 +11,8 @@ def save_models(
     catboost_model,
     iso_model,
     iso_ref: np.ndarray,
-    iso_calib,
+    score_calibrator,
+    ensemble_weights: dict,
     out_dir: Path,
 ) -> None:
     """Save all trained model artifacts to out_dir/models/."""
@@ -23,7 +24,8 @@ def save_models(
         "catboost_model"  : catboost_model,
         "iso_model"       : iso_model,
         "iso_ref"         : iso_ref,
-        "iso_calib"       : iso_calib,
+        "score_calibrator": score_calibrator,
+        "ensemble_weights": ensemble_weights,
     }
 
     for name, obj in artifacts.items():

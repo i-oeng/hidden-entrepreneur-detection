@@ -1,5 +1,22 @@
-# pu_learning.py - PU Learning (Bagging Method)
-# Ensemble PU learning to handle positive-unlabeled data, returning reliable negative scores.
+# WHY NOT NAIVE BINARY CLASSIFICATION:
+#   Labeling all consumer cards as "0" is wrong. Some are hidden entrepreneurs.
+#   Training on contaminated negatives teaches the model a blurry boundary.
+#
+# WHY BAGGING PU (Mordelet & Vert, 2014) WORKS:
+#   Each bag randomly samples |P| negatives from the unlabeled set U.
+#   Hidden entrepreneurs occasionally land in the training negatives for a
+#   given bag - but averaged across N_BAGS bags with different random draws,
+#   their contamination effect cancels out.
+#   True negatives appear consistently every bag → consistently low scores.
+#   Hidden positives appear inconsistently → their averaged scores are higher.
+#
+# RESULT:
+#   Ensemble of bag scores gives a PU-corrected probability surface that
+#   can be thresholded to extract reliable negatives for the final model.
+#
+# CONTRACT:
+#   run_pu_bagging(biz_df, cons_df, features, n_bags, bag_ratio, seed)
+#       -> pd.Series  (PU scores indexed to cons_df)
 
 import numpy as np
 import pandas as pd
@@ -14,7 +31,22 @@ def run_pu_bagging(
     bag_ratio: float,
     seed: int,
 ) -> pd.Series:
-    """Run PU Bagging and return out-of-bag scores for every consumer card."""
+    """
+    Run PU Bagging and return out-of-bag scores for every consumer card.
+
+    Parameters
+    biz_df    : card-level DataFrame for known business cards (label=1)
+    cons_df   : card-level DataFrame for consumer cards (unlabeled)
+    features  : canonical feature column list (config.FEATURES)
+    n_bags    : number of bags (default 50)
+    bag_ratio : #negatives per bag = bag_ratio × #positives (default 1.0)
+    seed      : base random seed; each bag uses seed + bag_index
+
+    Returns
+    pd.Series
+        PU score for each consumer card (higher = more business-like).
+        Indexed identically to cons_df.
+    """
     print("\n" + "=" * 60)
     print(f"SECTION 4: PU Learning - Bagging Method ({n_bags} bags)")
     print("=" * 60)

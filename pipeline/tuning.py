@@ -7,7 +7,7 @@ import optuna
 from catboost import CatBoostClassifier
 from sklearn.ensemble import IsolationForest
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import average_precision_score
+from sklearn.metrics import roc_auc_score
 
 
 def tune_and_train(
@@ -22,9 +22,7 @@ def tune_and_train(
     iso_params: dict,
 ):
     """Run Optuna hyperparameter search for LightGBM, then train all three models."""
-    print("\n" + "=" * 60)
-    print(f"SECTION 6: LightGBM Hyperparameter Tuning ({n_trials} Optuna trials)")
-    print("=" * 60)
+    print(f"LightGBM Hyperparameter Tuning ({n_trials} Optuna trials...)")
 
     skf = StratifiedKFold(n_splits=n_cv_folds, shuffle=True, random_state=seed)
 
@@ -56,7 +54,7 @@ def tune_and_train(
                     lgb.log_evaluation(-1),
                 ],
             )
-            fold_scores.append(average_precision_score(yva, clf.predict_proba(Xva)[:, 1]))
+            fold_scores.append(roc_auc_score(yva, clf.predict_proba(Xva)[:, 1]))
         return np.mean(fold_scores)
 
     study = optuna.create_study(
@@ -72,7 +70,7 @@ def tune_and_train(
         "verbose"         : -1,
         "random_state"    : seed,
     })
-    print(f"\nBest CV PR-AUC : {study.best_value:.4f}")
+    print(f"\nBest CV ROC-AUC : {study.best_value:.4f}")
     print(f"Best params    : {best_params}")
 
     # Train final LightGBM on full clean training set

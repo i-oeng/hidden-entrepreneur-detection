@@ -70,3 +70,31 @@ def plot_feature_importance(
     plt.savefig(out_dir / "feature_importance.png", dpi=150, bbox_inches="tight")
     plt.close()
     print("Feature importance plot saved.")
+
+
+def add_reason_codes(
+    lgb_model,
+    cons_df: pd.DataFrame,
+    features: list[str],
+    top_k: int = 3,
+) -> pd.DataFrame:
+    """Attach top positive LightGBM contribution features as simple reason codes."""
+    print("Computing per-card reason codes...")
+
+    X = cons_df[features]
+    contrib = lgb_model.booster_.predict(X, pred_contrib=True)
+    contrib = np.asarray(contrib)[:, :-1]  # final column is the expected value
+
+    top_idx = np.argsort(-contrib, axis=1)[:, :top_k]
+    scored = cons_df.copy()
+
+    for rank in range(top_k):
+        col = f"reason_{rank + 1}"
+        values = []
+        for row_i, feat_i in enumerate(top_idx[:, rank]):
+            feature = features[feat_i]
+            value = scored.iloc[row_i][feature]
+            values.append(f"{feature}={value:.3g}")
+        scored[col] = values
+
+    return scored
